@@ -1,131 +1,96 @@
 from langgraph.graph import StateGraph, START, END
-from typing import TypedDict
+from typing import TypedDict, Any
 
 from tools import (
     log_interaction,
     edit_interaction,
-    summarize_interaction,
-    recommend_next_action,
-    extract_entities,
+    fetch_hcp_profile,
+    check_sample_inventory,
+    create_followup_task,
 )
 
 
 class GraphState(TypedDict):
     name: str
     email: str
-    notes: str
-    result: dict
+    interaction_type: str
+    date: str
+    time: str
+    attendees: str
+    topics: str
+    samples: str
+    sentiment: str
+    outcomes: str
+    follow_up: str
+    interaction_id: int
+    result: dict[str, Any]
 
 
-def extract_node(state: GraphState):
-    result = extract_entities(state["notes"])
-
-    state["result"] = {
-        "entities": result
-    }
-
-    return state
-
-
-def summarize_node(state: GraphState):
-    result = summarize_interaction(state["notes"])
-
-    state["result"]["summary"] = result
-
+def fetch_profile_node(state: GraphState):
+    profile = fetch_hcp_profile.invoke({"name": state["name"]})
+    state["result"] = {"profile": profile}
     return state
 
 
 def log_node(state: GraphState):
-    result = log_interaction(
-        state["name"],
-        state["email"],
-        state["notes"]
-    )
-
-    state["result"]["log"] = result
-
+    log = log_interaction.invoke({
+        "name": state["name"],
+        "email": state["email"],
+        "interaction_type": state.get("interaction_type", "Meeting"),
+        "date": state.get("date", ""),
+        "time": state.get("time", ""),
+        "attendees": state.get("attendees", ""),
+        "topics": state.get("topics", ""),
+        "samples": state.get("samples", ""),
+        "sentiment": state.get("sentiment", "Neutral"),
+        "outcomes": state.get("outcomes", ""),
+        "follow_up": state.get("follow_up", "")
+    })
+    state["result"]["log"] = log
     return state
 
 
-def recommend_node(state: GraphState):
-    result = recommend_next_action()
+def inventory_node(state: GraphState):
+    sample_name = state.get("samples", "brochure")
+    inventory = check_sample_inventory.invoke({"sample_name": sample_name or "brochure"})
+    state["result"]["inventory"] = inventory
+    return state
 
-    state["result"]["recommendation"] = result
 
+def followup_node(state: GraphState):
+    task = create_followup_task.invoke({
+        "hcp_name": state["name"],
+        "follow_up_notes": state.get("follow_up", ""),
+        "due_date": ""
+    })
+    state["result"]["followup_task"] = task
     return state
 
 
 def edit_node(state: GraphState):
-    result = edit_interaction(
-        1,
-        state["notes"]
-    )
-
-    state["result"]["edit"] = result
-
+    edit = edit_interaction.invoke({
+        "interaction_id": state.get("interaction_id", 1),
+        "updated_notes": state.get("outcomes", "")
+    })
+    state["result"]["edit"] = edit
     return state
 
 
 def build_graph():
-
     workflow = StateGraph(GraphState)
 
-    workflow.add_node(
-        "extract_entities",
-        extract_node
-    )
+    workflow.add_node("fetch_profile", fetch_profile_node)
+    workflow.add_node("log_interaction", log_node)
+    workflow.add_node("check_inventory", inventory_node)
+    workflow.add_node("create_followup", followup_node)
+    workflow.add_node("edit_interaction", edit_node)
 
-    workflow.add_node(
-        "summarize",
-        summarize_node
-    )
-
-    workflow.add_node(
-        "log_interaction",
-        log_node
-    )
-
-    workflow.add_node(
-        "recommend_action",
-        recommend_node
-    )
-
-    workflow.add_node(
-        "edit_interaction",
-        edit_node
-    )
-
-
-    workflow.add_edge(
-        START,
-        "extract_entities"
-    )
-
-    workflow.add_edge(
-        "extract_entities",
-        "summarize"
-    )
-
-    workflow.add_edge(
-        "summarize",
-        "log_interaction"
-    )
-
-    workflow.add_edge(
-        "log_interaction",
-        "recommend_action"
-    )
-
-    workflow.add_edge(
-        "recommend_action",
-        "edit_interaction"
-    )
-
-    workflow.add_edge(
-        "edit_interaction",
-        END
-    )
-
+    workflow.add_edge(START, "fetch_profile")
+    workflow.add_edge("fetch_profile", "log_interaction")
+    workflow.add_edge("log_interaction", "check_inventory")
+    workflow.add_edge("check_inventory", "create_followup")
+    workflow.add_edge("create_followup", "edit_interaction")
+    workflow.add_edge("edit_interaction", END)
 
     return workflow.compile()
 

@@ -3,174 +3,95 @@ from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 from dotenv import load_dotenv
 from groq import Groq
+from graph import graph
 import os
 
-from sqlalchemy.orm import Session
-from database import SessionLocal, engine, Base
-import models
-from graph import graph
-
-
-# Load .env file
 load_dotenv()
 
+client = Groq(api_key=os.getenv("GROQ_API_KEY"))
 
-print(os.getenv("GROQ_API_KEY"))
-
-
-# Create database tables
-Base.metadata.create_all(bind=engine)
-
-
-# Create FastAPI app
 app = FastAPI()
 
-
-# Enable CORS
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=[
-        "http://localhost:5173",
-        "http://127.0.0.1:5173"
-    ],
-    allow_credentials=True,
+    allow_origins=["*"],
+    allow_credentials=False,
     allow_methods=["*"],
     allow_headers=["*"],
 )
 
 
-# Initialize Groq client
-client = Groq(
-    api_key=os.getenv("GROQ_API_KEY")
-)
-
-
-# -------------------------
-# Request Models
-# -------------------------
-
 class ChatRequest(BaseModel):
     message: str
-
-
-class HCPRequest(BaseModel):
-    name: str
-    email: str
-    specialty: str | None = None
-    hospital: str | None = None
-    location: str | None = None
-    notes: str | None = None
 
 
 class WorkflowRequest(BaseModel):
     name: str
     email: str
-    notes: str
+    interaction_type: str = "Meeting"
+    date: str = ""
+    time: str = ""
+    attendees: str = ""
+    topics: str = ""
+    samples: str = ""
+    sentiment: str = "Neutral"
+    outcomes: str = ""
+    follow_up: str = ""
 
-
-# -------------------------
-# Home Route
-# -------------------------
 
 @app.get("/")
 def home():
-    return {
-        "message": "AI CRM Backend is Running 🚀"
-    }
+    return {"message": "AI CRM Backend is Running 🚀"}
 
-
-# -------------------------
-# Chat Route (Groq AI)
-# -------------------------
 
 @app.post("/chat")
 def chat(request: ChatRequest):
-
-    try:
-        print("Using Groq API")
-
-        response = client.chat.completions.create(
-            model="llama-3.1-8b-instant",
-            messages=[
-                {
-                    "role": "user",
-                    "content": request.message
-                }
-            ]
-        )
-
-        return {
-            "response": response.choices[0].message.content
-        }
-
-    except Exception as e:
-        return {
-            "error": str(e)
-        }
+    response = client.chat.completions.create(
+        model="llama-3.3-70b-versatile",
+        messages=[{"role": "user", "content": request.message}]
+    )
+    return {"response": response.choices[0].message.content}
 
 
-# -------------------------
-# Save HCP Data
-# -------------------------
+@app.post("/extract-form")
+def extract_form(request: ChatRequest):
+    response = client.chat.completions.create(
+        model="llama-3.3-70b-versatile",
+        messages=[
+            {
+                "role": "system",
+                "content": (
+                    "You are a CRM data extractor. Extract fields from the user message. "
+                    "Return ONLY valid JSON with these keys: "
+                    "name, email, interaction_type, date, time, attendees, topics, samples, sentiment, outcomes, follow_up. "
+                    "sentiment must be one of: Positive, Neutral, Negative. "
+                    "interaction_type must be one of: Meeting, Call, Email, Conference. "
+                    "date must be in YYYY-MM-DD format (e.g. 2025-07-10). "
+                    "time must be in HH:MM 24-hour format (e.g. 15:00). "
+                    "Use empty string for missing fields. No markdown, no explanation."
+                )
+            },
+            {"role": "user", "content": request.message}
+        ]
+    )
+    return {"data": response.choices[0].message.content}
 
-@app.post("/hcp")
-def create_hcp(data: HCPRequest):
-
-    db: Session = SessionLocal()
-
-    try:
-
-        hcp = models.HCP(
-            name=data.name,
-            email=data.email,
-            specialty=data.specialty,
-            hospital=data.hospital,
-            location=data.location,
-            notes=data.notes
-        )
-
-        db.add(hcp)
-        db.commit()
-        db.refresh(hcp)
-
-        return {
-            "message": "HCP saved successfully",
-            "id": hcp.id
-        }
-
-    except Exception as e:
-
-        db.rollback()
-
-        return {
-            "error": str(e)
-        }
-
-    finally:
-        db.close()
-
-
-# -------------------------
-# LangGraph AI Workflow
-# -------------------------
 
 @app.post("/ai-workflow")
-def run_workflow(data: WorkflowRequest):
-
-    try:
-
-        result = graph.invoke(
-            {
-                "name": data.name,
-                "email": data.email,
-                "notes": data.notes
-            }
-        )
-
-        return result
-
-    except Exception as e:
-
-        return {
-            "error": str(e)
-        }
+def ai_workflow(request: WorkflowRequest):
+    result = graph.invoke({
+        "name": request.name,
+        "email": request.email,
+        "interaction_type": request.interaction_type,
+        "date": request.date,
+        "time": request.time,
+        "attendees": request.attendees,
+        "topics": request.topics,
+        "samples": request.samples,
+        "sentiment": request.sentiment,
+        "outcomes": request.outcomes,
+        "follow_up": request.follow_up,
+        "interaction_id": 1,
+        "result": {}
+    })
+    return {"result": result["result"]}
